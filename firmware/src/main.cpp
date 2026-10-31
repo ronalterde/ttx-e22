@@ -24,10 +24,11 @@ static volatile bool g_rx_flag = false;
 static String g_line;
 
 #if defined(BOARD_E22)
-static const char* kBeaconMsg = "DL6SR";
+static const char* kBeaconPrefix = "DL6SR";
 static const uint32_t kBeaconIntervalMs = 30000;
 static bool g_beacon_on = true;
 static uint32_t g_last_beacon_ms = 0;
+static uint32_t g_beacon_seq = 0;
 #endif
 
 static void setRxFlag() { g_rx_flag = true; }
@@ -65,9 +66,10 @@ static void printStatus() {
   Serial.println(F("RF switch: DIO2"));
 #endif
 #if defined(BOARD_E22)
-  Serial.printf("beacon=%s  msg=%s  every %lu ms\n",
-                g_beacon_on ? "on" : "paused", kBeaconMsg,
-                (unsigned long)kBeaconIntervalMs);
+  Serial.printf("beacon=%s  %s #<n>  every %lu ms  next=#%lu\n",
+                g_beacon_on ? "on" : "paused", kBeaconPrefix,
+                (unsigned long)kBeaconIntervalMs,
+                (unsigned long)(g_beacon_seq + 1));
 #endif
 }
 
@@ -319,7 +321,7 @@ void setup() {
   printStatus();
   printHelp();
 #if defined(BOARD_E22)
-  Serial.println(F("beacon DL6SR every 30s — pause / resume"));
+  Serial.println(F("beacon DL6SR #<n> every 30s — pause / resume"));
   g_last_beacon_ms = millis();  // first TX after one full interval
 #else
   Serial.println(F("listening — type tx hello"));
@@ -331,7 +333,13 @@ void loop() {
 #if defined(BOARD_E22)
   if (g_beacon_on && (millis() - g_last_beacon_ms) >= kBeaconIntervalMs) {
     g_last_beacon_ms = millis();
-    sendBytes(reinterpret_cast<const uint8_t*>(kBeaconMsg), strlen(kBeaconMsg));
+    g_beacon_seq++;
+    char msg[24];
+    const int n = snprintf(msg, sizeof(msg), "%s #%lu", kBeaconPrefix,
+                           (unsigned long)g_beacon_seq);
+    if (n > 0) {
+      sendBytes(reinterpret_cast<const uint8_t*>(msg), (size_t)n);
+    }
   }
 #endif
 
