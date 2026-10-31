@@ -12,7 +12,8 @@ static bool g_eink_ready = false;
 
 static void einkBegin() {
   // Vext already enabled in setup(); library also manages it
-  g_eink.landscape();
+  // landscape() is rotation 1; 3 = same landscape orientation rotated 180°
+  g_eink.setRotation(3);
   g_eink.setFont(NULL);
   g_eink.clearMemory();
   g_eink.setCursor(4, 16);
