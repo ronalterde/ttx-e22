@@ -1,0 +1,14 @@
+# PlatformIO
+firmware/.pio/
+firmware/.pio-home/
+.pio/
+.pio-home/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+hardware/**/fp-info-cache
