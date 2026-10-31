@@ -23,6 +23,13 @@ static int8_t g_power   = 10;
 static volatile bool g_rx_flag = false;
 static String g_line;
 
+#if defined(BOARD_E22)
+static const char* kBeaconMsg = "DL6SR";
+static const uint32_t kBeaconIntervalMs = 30000;
+static bool g_beacon_on = true;
+static uint32_t g_last_beacon_ms = 0;
+#endif
+
 static void setRxFlag() { g_rx_flag = true; }
 
 static void printHelp() {
@@ -38,6 +45,10 @@ static void printHelp() {
     "  tx <text>            send UTF-8 / ASCII bytes\n"
     "  txhex <aa bb ..>     send raw hex bytes\n"
     "  rx                   (re)enter continuous receive\n"
+#if defined(BOARD_E22)
+    "  pause                stop DL6SR beacon\n"
+    "  resume               start DL6SR beacon (30s)\n"
+#endif
   ));
 }
 
@@ -52,6 +63,11 @@ static void printStatus() {
   Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
 #else
   Serial.println(F("RF switch: DIO2"));
+#endif
+#if defined(BOARD_E22)
+  Serial.printf("beacon=%s  msg=%s  every %lu ms\n",
+                g_beacon_on ? "on" : "paused", kBeaconMsg,
+                (unsigned long)kBeaconIntervalMs);
 #endif
 }
 
@@ -205,6 +221,19 @@ static void handleCommand(String line) {
     sendBytes(buf, n);
     return;
   }
+#if defined(BOARD_E22)
+  if (cmd == "pause") {
+    g_beacon_on = false;
+    Serial.println(F("beacon paused"));
+    return;
+  }
+  if (cmd == "resume") {
+    g_beacon_on = true;
+    g_last_beacon_ms = 0;  // send on next loop tick
+    Serial.println(F("beacon resumed"));
+    return;
+  }
+#endif
 
   Serial.println(F("unknown — try help"));
 }
@@ -289,11 +318,23 @@ void setup() {
 
   printStatus();
   printHelp();
+#if defined(BOARD_E22)
+  Serial.println(F("beacon DL6SR every 30s — pause / resume"));
+  g_last_beacon_ms = millis();  // first TX after one full interval
+#else
   Serial.println(F("listening — type tx hello"));
+#endif
   Serial.flush();
 }
 
 void loop() {
+#if defined(BOARD_E22)
+  if (g_beacon_on && (millis() - g_last_beacon_ms) >= kBeaconIntervalMs) {
+    g_last_beacon_ms = millis();
+    sendBytes(reinterpret_cast<const uint8_t*>(kBeaconMsg), strlen(kBeaconMsg));
+  }
+#endif
+
   if (g_rx_flag) {
     g_rx_flag = false;
     uint8_t buf[256];
