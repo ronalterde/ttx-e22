@@ -80,7 +80,9 @@ Header J4: Pin3=`GPS_TX`, Pin4=`GPS_RX` (Netzname = GPS-Seite; Firmware-UART kre
 - Pins: `firmware/include/board_pins.h` (`BOARD_E22` / `BOARD_HELTEC_E290`).
 - E22: SX1268, **TCXO 1.8 V**, RF-Switch **RXEN/TXEN**, VCC **5 V**, Default **433.775 MHz**.
 - Heltec Vision Master E290: ESP32-S3 + **SX1262**, DIO2=RF-Switch, Vext=GPIO18 HIGH, USB-CDC.
-  - LoRa-Pins: NSS8 SCK9 MOSI10 MISO11 RST12 BUSY13 DIO1=14.
+  - LoRa-Pins: NSS8 SCK9 MOSI10 MISO11 RST12 BUSY13 DIO1=14 (FSPI).
+  - E-Ink 296×128: SDI1 CLK2 CS3 DC4 RST5 BUSY6 (HSPI), Lib `heltec-eink-modules`, Flag `Vision_Master_E290`.
+  - RX-Pakete werden auf dem E-Ink angezeigt (`eink_ui.h`).
   - **Muss 433‑MHz-SKU sein**, um mit dem E22 zu sprechen (nicht EU868/US915).
 - Keine Annahmen aus V2.1.1 (Buck, Schraubklemme 6–24V, Deckel-J10).
 - Bei Pin-Fragen: PCB-Netzliste prüfen, nicht nur Schaltplan-Labels/Vision auf PDFs.

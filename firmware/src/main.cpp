@@ -3,9 +3,12 @@
 #include <RadioLib.h>
 
 #include "board_pins.h"
+#include "eink_ui.h"
 
 #if defined(BOARD_HELTEC_E290)
-SX1262 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY);
+// LoRa on FSPI; e-ink library uses a separate HSPI instance
+static SPIClass loraSpi(FSPI);
+SX1262 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY, loraSpi);
 #else
 SX1268 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY);
 #endif
@@ -231,8 +234,12 @@ void setup() {
 
 #if defined(BOARD_HELTEC_E290)
   pinMode(PIN_VEXT, OUTPUT);
-  digitalWrite(PIN_VEXT, HIGH);  // power LoRa / peripherals
+  digitalWrite(PIN_VEXT, HIGH);  // power LoRa / e-ink
   delay(50);
+  Serial.println(F("e-ink init..."));
+  Serial.flush();
+  einkBegin();
+  Serial.println(F("e-ink OK"));
 #endif
 
 #if LORA_HAS_RX_TX_EN
@@ -245,7 +252,11 @@ void setup() {
   pinMode(PIN_LORA_BUSY, INPUT);
   Serial.printf("BUSY=%d\n", digitalRead(PIN_LORA_BUSY));
 
+#if defined(BOARD_HELTEC_E290)
+  loraSpi.begin(PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_LORA_NSS);
+#else
   SPI.begin(PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_LORA_NSS);
+#endif
   delay(20);
 
 #if LORA_HAS_RX_TX_EN
@@ -290,7 +301,10 @@ void loop() {
     const size_t n = len > sizeof(buf) ? sizeof(buf) : len;
     const int16_t st = radio.readData(buf, n);
     if (st == RADIOLIB_ERR_NONE) {
-      printPayload(buf, n, radio.getRSSI(), radio.getSNR());
+      const float rssi = radio.getRSSI();
+      const float snr = radio.getSNR();
+      printPayload(buf, n, rssi, snr);
+      einkShowRx(buf, n, rssi, snr);
     } else if (st == RADIOLIB_ERR_CRC_MISMATCH) {
       Serial.println(F("RX CRC error"));
     } else {
