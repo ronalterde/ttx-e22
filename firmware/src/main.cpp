@@ -4,15 +4,18 @@
 
 #include "board_pins.h"
 
-// E22-400M33S: SX1268 + TCXO 1.8 V (DIO3), RF-Switch über RXEN/TXEN
-SX1268 radio = new Module(PIN_E22_NSS, PIN_E22_DIO1, PIN_E22_NRST, PIN_E22_BUSY);
+#if defined(BOARD_HELTEC_E290)
+SX1262 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY);
+#else
+SX1268 radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY);
+#endif
 
-// EU 433-ISM; bei Bedarf per "freq" ändern
+// Must match on both ends. E22 is 410–493 MHz — Heltec needs 433 MHz HW variant.
 static float g_freq_mhz = 433.775f;
 static float g_bw_khz   = 125.0f;
 static uint8_t g_sf     = 7;
 static uint8_t g_cr     = 5;   // 4/5
-static int8_t g_power   = 10;  // dBm am Chip; PA des E22 verstärkt weiter
+static int8_t g_power   = 10;
 
 static volatile bool g_rx_flag = false;
 static String g_line;
@@ -36,11 +39,17 @@ static void printHelp() {
 }
 
 static void printStatus() {
+  Serial.printf("board=%s\n", BOARD_NAME);
   Serial.printf("freq=%.3f MHz  bw=%.1f kHz  sf=%u  cr=4/%u  pwr=%d dBm\n",
                 g_freq_mhz, g_bw_khz, g_sf, g_cr, g_power);
-  Serial.printf("pins NSS=%d DIO1=%d RST=%d BUSY=%d RXEN=%d TXEN=%d\n",
-                PIN_E22_NSS, PIN_E22_DIO1, PIN_E22_NRST, PIN_E22_BUSY,
-                PIN_E22_RXEN, PIN_E22_TXEN);
+  Serial.printf("pins NSS=%d DIO1=%d RST=%d BUSY=%d SCK=%d MISO=%d MOSI=%d\n",
+                PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY,
+                PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI);
+#if LORA_HAS_RX_TX_EN
+  Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
+#else
+  Serial.println(F("RF switch: DIO2"));
+#endif
 }
 
 static int16_t applyModem() {
@@ -140,8 +149,9 @@ static void handleCommand(String line) {
   }
   if (cmd == "freq") {
     float v = arg.toFloat();
-    if (v < 410.0f || v > 493.0f) {
-      Serial.println(F("freq out of E22 range 410..493 MHz"));
+    // SX126x can tune broadly; antenna match is the real limit
+    if (v < 150.0f || v > 960.0f) {
+      Serial.println(F("freq out of SX126x range 150..960 MHz"));
       return;
     }
     g_freq_mhz = v;
@@ -198,8 +208,7 @@ static void handleCommand(String line) {
 
 static void haltForever(const char* why, int16_t code) {
   Serial.printf("HALT: %s (code %d)\n", why, code);
-  Serial.println(F("Check: E22 powered (5V), antenna optional for init, SPI pins."));
-  Serial.println(F("Press EN/RESET to retry. Heartbeat every 2s ..."));
+  Serial.println(F("Check power, antenna match band, SPI. Heartbeat every 2s ..."));
   Serial.flush();
   while (true) {
     Serial.print('.');
@@ -210,29 +219,40 @@ static void haltForever(const char* why, int16_t code) {
 
 void setup() {
   Serial.begin(115200);
-  delay(800);  // Zeit, bis der Monitor nach Upload wieder verbunden ist
+  delay(800);
   Serial.println();
-  Serial.println(F("ESP32-E22 V2.1.0  raw LoRa"));
+  Serial.printf("%s  raw LoRa\n", BOARD_NAME);
+#if defined(BOARD_HELTEC_E290)
+  Serial.println(F("NOTE: E22 TX is 433 MHz — Heltec must be 433 MHz SKU (not 868)."));
+#endif
   Serial.flush();
 
-  pinMode(PIN_SW1, INPUT_PULLUP);
+  pinMode(PIN_USER_BTN, INPUT_PULLUP);
 
-  // RF-Switch in bekannten Zustand (RX aktiv), bevor SPI startet
-  pinMode(PIN_E22_RXEN, OUTPUT);
-  pinMode(PIN_E22_TXEN, OUTPUT);
-  digitalWrite(PIN_E22_RXEN, HIGH);
-  digitalWrite(PIN_E22_TXEN, LOW);
+#if defined(BOARD_HELTEC_E290)
+  pinMode(PIN_VEXT, OUTPUT);
+  digitalWrite(PIN_VEXT, HIGH);  // power LoRa / peripherals
+  delay(50);
+#endif
 
-  pinMode(PIN_E22_BUSY, INPUT);
-  Serial.printf("BUSY=%d (expect 0 shortly after reset)\n", digitalRead(PIN_E22_BUSY));
+#if LORA_HAS_RX_TX_EN
+  pinMode(PIN_LORA_RXEN, OUTPUT);
+  pinMode(PIN_LORA_TXEN, OUTPUT);
+  digitalWrite(PIN_LORA_RXEN, HIGH);
+  digitalWrite(PIN_LORA_TXEN, LOW);
+#endif
 
-  SPI.begin(PIN_E22_SCK, PIN_E22_MISO, PIN_E22_MOSI, PIN_E22_NSS);
+  pinMode(PIN_LORA_BUSY, INPUT);
+  Serial.printf("BUSY=%d\n", digitalRead(PIN_LORA_BUSY));
+
+  SPI.begin(PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_LORA_NSS);
   delay(20);
 
-  radio.setRfSwitchPins(PIN_E22_RXEN, PIN_E22_TXEN);
-  radio.setDio2AsRfSwitch(false);
+#if LORA_HAS_RX_TX_EN
+  radio.setRfSwitchPins(PIN_LORA_RXEN, PIN_LORA_TXEN);
+#endif
+  radio.setDio2AsRfSwitch(LORA_DIO2_AS_RF_SWITCH);
 
-  // E22: TCXO 1.8 V über DIO3 — bei Fehlschlag XTAL-Fallback
   Serial.println(F("radio.begin TCXO 1.8V ..."));
   Serial.flush();
   int16_t st = radio.begin(g_freq_mhz, g_bw_khz, g_sf, g_cr,
@@ -279,12 +299,11 @@ void loop() {
     startRx();
   }
 
-  // SW1: short press sends a tiny test burst
   static bool swPrev = true;
-  bool sw = digitalRead(PIN_SW1);
+  bool sw = digitalRead(PIN_USER_BTN);
   if (swPrev && !sw) {
     delay(30);
-    if (!digitalRead(PIN_SW1)) {
+    if (!digitalRead(PIN_USER_BTN)) {
       const char* msg = "BTN";
       sendBytes(reinterpret_cast<const uint8_t*>(msg), 3);
     }

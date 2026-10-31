@@ -76,10 +76,12 @@ Header J4: Pin3=`GPS_TX`, Pin4=`GPS_RX` (Netzname = GPS-Seite; Firmware-UART kre
 
 ## Firmware / Agent-Hinweise
 
-- Firmware: `firmware/` (PlatformIO, RadioLib, SX1268).
-- Pins: `firmware/include/board_pins.h` — muss mit Tabelle oben übereinstimmen.
-- E22: **TCXO 1.8 V** (`begin(..., tcxoVoltage=1.8)`), RF-Switch **RXEN/TXEN** (nicht DIO2), VCC **5 V**.
-- Chip: SX1268, Band 410–493 MHz (Default-Firmware 433.775 MHz).
+- Firmware: `firmware/` (PlatformIO, RadioLib), Envs `esp32-e22` und `heltec-e290`.
+- Pins: `firmware/include/board_pins.h` (`BOARD_E22` / `BOARD_HELTEC_E290`).
+- E22: SX1268, **TCXO 1.8 V**, RF-Switch **RXEN/TXEN**, VCC **5 V**, Default **433.775 MHz**.
+- Heltec Vision Master E290: ESP32-S3 + **SX1262**, DIO2=RF-Switch, Vext=GPIO18 HIGH, USB-CDC.
+  - LoRa-Pins: NSS8 SCK9 MOSI10 MISO11 RST12 BUSY13 DIO1=14.
+  - **Muss 433‑MHz-SKU sein**, um mit dem E22 zu sprechen (nicht EU868/US915).
 - Keine Annahmen aus V2.1.1 (Buck, Schraubklemme 6–24V, Deckel-J10).
 - Bei Pin-Fragen: PCB-Netzliste prüfen, nicht nur Schaltplan-Labels/Vision auf PDFs.
 - Weitere Versionen laut `hardware/README.md`: V2.1.2 (quer/außen), V2.2.x (beidseitig) — separat behandeln, wenn Ordner existieren.
