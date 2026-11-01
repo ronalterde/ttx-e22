@@ -4,6 +4,9 @@
 
 #include "board_pins.h"
 #include "eink_ui.h"
+#if defined(BOARD_E22)
+#include "ds1820.h"
+#endif
 
 #if defined(BOARD_HELTEC_E290)
 // LoRa on FSPI; e-ink library uses a separate HSPI instance
@@ -25,7 +28,7 @@ static String g_line;
 
 #if defined(BOARD_E22)
 static const char* kBeaconPrefix = "DL6SR";
-static const uint32_t kBeaconIntervalMs = 30000;
+static const uint32_t kBeaconIntervalMs = 10000;
 static bool g_beacon_on = true;
 static uint32_t g_last_beacon_ms = 0;
 static uint32_t g_beacon_seq = 0;
@@ -48,7 +51,9 @@ static void printHelp() {
     "  rx                   (re)enter continuous receive\n"
 #if defined(BOARD_E22)
     "  pause                stop DL6SR beacon\n"
-    "  resume               start DL6SR beacon (30s)\n"
+    "  resume               start DL6SR beacon (10s)\n"
+    "  temp                 read DS1820 on J5 (GPIO25)\n"
+    "  tempoff <C>          add offset to temp (e.g. tempoff -4)\n"
 #endif
   ));
 }
@@ -60,11 +65,11 @@ static void printStatus() {
   Serial.printf("pins NSS=%d DIO1=%d RST=%d BUSY=%d SCK=%d MISO=%d MOSI=%d\n",
                 PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY,
                 PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI);
-#if LORA_HAS_RX_TX_EN
-  Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
-#else
-  Serial.println(F("RF switch: DIO2"));
-#endif
+  if constexpr (LORA_HAS_RX_TX_EN) {
+    Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
+  } else {
+    Serial.println(F("RF switch: DIO2"));
+  }
 #if defined(BOARD_E22)
   Serial.printf("beacon=%s  %s #<n>  every %lu ms  next=#%lu\n",
                 g_beacon_on ? "on" : "paused", kBeaconPrefix,
@@ -235,6 +240,28 @@ static void handleCommand(String line) {
     Serial.println(F("beacon resumed"));
     return;
   }
+  if (cmd == "temp") {
+    float c = 0.0f;
+    if (ds1820ReadCelsius(&c)) {
+      int16_t raw = 0;
+      ds1820LastRaw(&raw);
+      Serial.printf("temp=%.2f C  raw=%d (%.1f half-deg)  off=%.2f\n",
+                    (double)c, (int)raw, raw / 2.0,
+                    (double)ds1820GetOffsetC());
+    } else {
+      Serial.println(F("temp read failed"));
+    }
+    return;
+  }
+  if (cmd == "tempoff") {
+    if (arg.length() == 0) {
+      Serial.printf("tempoff=%.2f C\n", (double)ds1820GetOffsetC());
+      return;
+    }
+    ds1820SetOffsetC(arg.toFloat());
+    Serial.printf("tempoff=%.2f C\n", (double)ds1820GetOffsetC());
+    return;
+  }
 #endif
 
   Serial.println(F("unknown — try help"));
@@ -263,6 +290,10 @@ void setup() {
 
   pinMode(PIN_USER_BTN, INPUT_PULLUP);
 
+#if defined(BOARD_E22)
+  ds1820Begin(PIN_ONEWIRE);
+#endif
+
 #if defined(BOARD_HELTEC_E290)
   pinMode(PIN_VEXT, OUTPUT);
   digitalWrite(PIN_VEXT, HIGH);  // power LoRa / e-ink
@@ -273,12 +304,12 @@ void setup() {
   Serial.println(F("e-ink OK"));
 #endif
 
-#if LORA_HAS_RX_TX_EN
-  pinMode(PIN_LORA_RXEN, OUTPUT);
-  pinMode(PIN_LORA_TXEN, OUTPUT);
-  digitalWrite(PIN_LORA_RXEN, HIGH);
-  digitalWrite(PIN_LORA_TXEN, LOW);
-#endif
+  if constexpr (LORA_HAS_RX_TX_EN) {
+    pinMode(PIN_LORA_RXEN, OUTPUT);
+    pinMode(PIN_LORA_TXEN, OUTPUT);
+    digitalWrite(PIN_LORA_RXEN, HIGH);
+    digitalWrite(PIN_LORA_TXEN, LOW);
+  }
 
   pinMode(PIN_LORA_BUSY, INPUT);
   Serial.printf("BUSY=%d\n", digitalRead(PIN_LORA_BUSY));
@@ -290,9 +321,10 @@ void setup() {
 #endif
   delay(20);
 
-#if LORA_HAS_RX_TX_EN
-  radio.setRfSwitchPins(PIN_LORA_RXEN, PIN_LORA_TXEN);
-#endif
+  if constexpr (LORA_HAS_RX_TX_EN) {
+    // E22-400M33S: discrete RXEN/TXEN to external PA/LNA switch (not DIO2)
+    radio.setRfSwitchPins(PIN_LORA_RXEN, PIN_LORA_TXEN);
+  }
   radio.setDio2AsRfSwitch(LORA_DIO2_AS_RF_SWITCH);
 
   Serial.println(F("radio.begin TCXO 1.8V ..."));
@@ -321,7 +353,7 @@ void setup() {
   printStatus();
   printHelp();
 #if defined(BOARD_E22)
-  Serial.println(F("beacon DL6SR #<n> every 30s — pause / resume"));
+  Serial.println(F("beacon DL6SR #<n> <temp>C every 10s — pause / resume / temp"));
   g_last_beacon_ms = millis();  // first TX after one full interval
 #else
   Serial.println(F("listening — type tx hello"));
@@ -334,9 +366,16 @@ void loop() {
   if (g_beacon_on && (millis() - g_last_beacon_ms) >= kBeaconIntervalMs) {
     g_last_beacon_ms = millis();
     g_beacon_seq++;
-    char msg[24];
-    const int n = snprintf(msg, sizeof(msg), "%s #%lu", kBeaconPrefix,
-                           (unsigned long)g_beacon_seq);
+    char msg[48];
+    float c = 0.0f;
+    int n;
+    if (ds1820ReadCelsius(&c)) {
+      n = snprintf(msg, sizeof(msg), "%s #%lu %.2fC", kBeaconPrefix,
+                   (unsigned long)g_beacon_seq, c);
+    } else {
+      n = snprintf(msg, sizeof(msg), "%s #%lu ?C", kBeaconPrefix,
+                   (unsigned long)g_beacon_seq);
+    }
     if (n > 0) {
       sendBytes(reinterpret_cast<const uint8_t*>(msg), (size_t)n);
     }

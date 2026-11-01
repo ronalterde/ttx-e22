@@ -39,6 +39,7 @@ static constexpr int PIN_LORA_DIO1 = 33;
 static constexpr int PIN_LORA_RXEN = 14;
 static constexpr int PIN_LORA_TXEN = 13;
 static constexpr int PIN_USER_BTN  = 12;  // SW1
+static constexpr int PIN_ONEWIRE   = 25;  // J5 Data (+ R5 4k7 to 3V3)
 static constexpr bool LORA_DIO2_AS_RF_SWITCH = false;
 static constexpr bool LORA_HAS_RX_TX_EN = true;
 static constexpr bool HAS_EINK = false;

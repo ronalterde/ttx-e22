@@ -40,4 +40,4 @@ help
 
 User-Button sendet `BTN` (E22: SW1, Heltec: BOOT).
 
-**E22-Beacon:** sendet automatisch `DL6SR #<n>` alle 30 s (Sequenznummer steigt). Serial: `pause` / `resume`.
+**E22-Beacon:** sendet automatisch `DL6SR #<n>` alle 10 s (Sequenznummer steigt). Serial: `pause` / `resume`.
