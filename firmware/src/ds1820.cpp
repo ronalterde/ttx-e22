@@ -1,5 +1,7 @@
 #include "ds1820.h"
 
+#if defined(BOARD_E22)
+
 #include <OneWire.h>
 #include <math.h>
 
@@ -173,3 +175,5 @@ bool ds1820LastRaw(int16_t* out_raw) {
 void ds1820SetOffsetC(float offset_c) { g_offset_c = offset_c; }
 
 float ds1820GetOffsetC() { return g_offset_c; }
+
+#endif  // BOARD_E22

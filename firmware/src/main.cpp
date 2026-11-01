@@ -65,11 +65,11 @@ static void printStatus() {
   Serial.printf("pins NSS=%d DIO1=%d RST=%d BUSY=%d SCK=%d MISO=%d MOSI=%d\n",
                 PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_NRST, PIN_LORA_BUSY,
                 PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI);
-  if constexpr (LORA_HAS_RX_TX_EN) {
-    Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
-  } else {
-    Serial.println(F("RF switch: DIO2"));
-  }
+#if defined(BOARD_E22)
+  Serial.printf("RF switch RXEN=%d TXEN=%d\n", PIN_LORA_RXEN, PIN_LORA_TXEN);
+#else
+  Serial.println(F("RF switch: DIO2"));
+#endif
 #if defined(BOARD_E22)
   Serial.printf("beacon=%s  %s #<n>  every %lu ms  next=#%lu\n",
                 g_beacon_on ? "on" : "paused", kBeaconPrefix,
@@ -304,12 +304,12 @@ void setup() {
   Serial.println(F("e-ink OK"));
 #endif
 
-  if constexpr (LORA_HAS_RX_TX_EN) {
-    pinMode(PIN_LORA_RXEN, OUTPUT);
-    pinMode(PIN_LORA_TXEN, OUTPUT);
-    digitalWrite(PIN_LORA_RXEN, HIGH);
-    digitalWrite(PIN_LORA_TXEN, LOW);
-  }
+#if defined(BOARD_E22)
+  pinMode(PIN_LORA_RXEN, OUTPUT);
+  pinMode(PIN_LORA_TXEN, OUTPUT);
+  digitalWrite(PIN_LORA_RXEN, HIGH);
+  digitalWrite(PIN_LORA_TXEN, LOW);
+#endif
 
   pinMode(PIN_LORA_BUSY, INPUT);
   Serial.printf("BUSY=%d\n", digitalRead(PIN_LORA_BUSY));
@@ -321,10 +321,10 @@ void setup() {
 #endif
   delay(20);
 
-  if constexpr (LORA_HAS_RX_TX_EN) {
-    // E22-400M33S: discrete RXEN/TXEN to external PA/LNA switch (not DIO2)
-    radio.setRfSwitchPins(PIN_LORA_RXEN, PIN_LORA_TXEN);
-  }
+#if defined(BOARD_E22)
+  // E22-400M33S: discrete RXEN/TXEN to external PA/LNA switch (not DIO2)
+  radio.setRfSwitchPins(PIN_LORA_RXEN, PIN_LORA_TXEN);
+#endif
   radio.setDio2AsRfSwitch(LORA_DIO2_AS_RF_SWITCH);
 
   Serial.println(F("radio.begin TCXO 1.8V ..."));
@@ -362,6 +362,8 @@ void setup() {
 }
 
 void loop() {
+  einkTick();
+
 #if defined(BOARD_E22)
   if (g_beacon_on && (millis() - g_last_beacon_ms) >= kBeaconIntervalMs) {
     g_last_beacon_ms = millis();
