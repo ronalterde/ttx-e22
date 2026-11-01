@@ -14,20 +14,27 @@ static uint32_t g_eink_start_ms = 0;
 static uint32_t g_eink_last_rx_ms = 0;
 static bool g_eink_have_rx = false;
 static uint32_t g_eink_last_paint_ms = 0;
-static uint32_t g_eink_invert_until_ms = 0;  // payload line inverted until this
+static uint32_t g_eink_invert_until_ms = 0;
 static bool g_eink_was_invert = false;
 
-static constexpr uint32_t kEinkInvertMs = 2500;  // 2–3 s highlight on new RX
-static constexpr int16_t kPayloadBaseline = 66;
-static constexpr int16_t kPayloadBandY = 50;
-static constexpr int16_t kPayloadBandH = 24;
+static constexpr uint32_t kEinkInvertMs = 2500;
+static constexpr int16_t kPayloadBaseline = 56;
+static constexpr int16_t kPayloadBandY = 40;
+static constexpr int16_t kPayloadBandH = 22;
 
-// Cached last packet for redraw with live timers
+// RSSI history: X = sample slot, Y = RSSI; skips = seq gaps (no line)
+static constexpr size_t kRssiHist = 56;
+static constexpr int16_t kRssiPlotMin = -120;
+static constexpr int16_t kRssiPlotMax = -20;
+static constexpr int8_t kRssiSkip = -128;  // sentinel: missing sample
+static int8_t g_rssi_hist[kRssiHist] = {};
+static size_t g_rssi_hist_n = 0;
+static bool g_have_beacon_seq = false;
+static uint32_t g_last_beacon_seq = 0;
+
 static char g_eink_asc[64] = "";
-static char g_eink_hex[48] = "";
 static float g_eink_rssi = 0;
 static float g_eink_snr = 0;
-static unsigned g_eink_len = 0;
 
 static void einkFormatElapsed(char* buf, size_t n, uint32_t elapsed_ms) {
   const uint32_t total_s = elapsed_ms / 1000UL;
@@ -39,6 +46,95 @@ static void einkFormatElapsed(char* buf, size_t n, uint32_t elapsed_ms) {
              (unsigned long)s);
   } else {
     snprintf(buf, n, "%lu:%02lu", (unsigned long)m, (unsigned long)s);
+  }
+}
+
+static void einkHistPush(int8_t v) {
+  if (g_rssi_hist_n < kRssiHist) {
+    g_rssi_hist[g_rssi_hist_n++] = v;
+  } else {
+    memmove(g_rssi_hist, g_rssi_hist + 1, kRssiHist - 1);
+    g_rssi_hist[kRssiHist - 1] = v;
+  }
+}
+
+static void einkPushRssi(float rssi) {
+  int v = (int)rssi;
+  if (v < -127) v = -127;  // reserve -128 for skip
+  if (v > 127) v = 127;
+  einkHistPush((int8_t)v);
+}
+
+static void einkPushSkips(uint32_t n) {
+  if (n > kRssiHist) n = kRssiHist;
+  for (uint32_t i = 0; i < n; i++) {
+    einkHistPush(kRssiSkip);
+  }
+}
+
+// Parse "… #123 …" (DL6SR beacon). Returns true if found.
+static bool einkParseBeaconSeq(const char* asc, uint32_t* out_seq) {
+  const char* p = strchr(asc, '#');
+  if (!p || !p[1] || !isdigit((unsigned char)p[1])) return false;
+  *out_seq = (uint32_t)strtoul(p + 1, nullptr, 10);
+  return true;
+}
+
+static int16_t einkRssiToY(int16_t rssi, int16_t gy, int16_t gh) {
+  if (rssi < kRssiPlotMin) rssi = kRssiPlotMin;
+  if (rssi > kRssiPlotMax) rssi = kRssiPlotMax;
+  const int16_t span = kRssiPlotMax - kRssiPlotMin;
+  const int16_t inner = gh - 2;
+  return (int16_t)(gy + gh - 1 -
+                   ((int32_t)(rssi - kRssiPlotMin) * inner) / span);
+}
+
+static void einkDrawRssiGraph() {
+  const int16_t gx = 4;
+  const int16_t gy = 78;
+  const int16_t gw = (int16_t)(g_eink.width() - 8);
+  const int16_t gh = 46;
+
+  g_eink.drawRect(gx, gy, gw, gh, BLACK);
+  g_eink.setFont(NULL);
+  g_eink.setCursor(gx + 2, gy + 8);
+  g_eink.print(F("RSSI"));
+  g_eink.setCursor(gx + gw - 28, gy + 8);
+  g_eink.printf("%d", (int)kRssiPlotMax);
+  g_eink.setCursor(gx + gw - 34, gy + gh - 2);
+  g_eink.printf("%d", (int)kRssiPlotMin);
+  g_eink.setFont(&FreeSans9pt7b);
+
+  if (g_rssi_hist_n < 1) return;
+
+  const int16_t plot_w = gw - 2;
+  int16_t prev_x = -1;
+  int16_t prev_y = -1;
+  int16_t last_good_x = -1;
+  int16_t last_good_y = -1;
+
+  for (size_t i = 0; i < g_rssi_hist_n; i++) {
+    const int16_t x =
+        (int16_t)(gx + 1 +
+                  ((int32_t)i * (plot_w - 1)) / (int32_t)(kRssiHist - 1));
+    if (g_rssi_hist[i] == kRssiSkip) {
+      // Vertical tick = skipped sample; break polyline
+      g_eink.drawLine(x, gy + 3, x, gy + gh - 3, BLACK);
+      prev_x = -1;
+      prev_y = -1;
+      continue;
+    }
+    const int16_t y = einkRssiToY(g_rssi_hist[i], gy, gh);
+    if (prev_x >= 0) {
+      g_eink.drawLine(prev_x, prev_y, x, y, BLACK);
+    }
+    prev_x = x;
+    prev_y = y;
+    last_good_x = x;
+    last_good_y = y;
+  }
+  if (last_good_x >= 0) {
+    g_eink.fillRect(last_good_x - 1, last_good_y - 1, 3, 3, BLACK);
   }
 }
 
@@ -60,13 +156,13 @@ static void einkPaint() {
 
   g_eink.clearMemory();
   g_eink.setTextColor(BLACK);
-  // FreeSans9pt7b: Y is baseline (~16 px line spacing)
-  g_eink.setCursor(4, 18);
-  g_eink.printf("up %s   last %s", up, ago);
+  g_eink.setFont(&FreeSans9pt7b);
+  g_eink.setCursor(4, 16);
+  g_eink.printf("up %s  last %s", up, ago);
 
   if (g_eink_have_rx) {
-    g_eink.setCursor(4, 42);
-    g_eink.printf("#%lu  RSSI %.0f  SNR %.1f", (unsigned long)g_rx_count,
+    g_eink.setCursor(4, 34);
+    g_eink.printf("#%lu %.0fdBm SNR%.1f", (unsigned long)g_rx_count,
                   g_eink_rssi, g_eink_snr);
 
     if (invert_payload) {
@@ -74,15 +170,14 @@ static void einkPaint() {
       g_eink.setTextColor(WHITE);
     }
     g_eink.setCursor(4, kPayloadBaseline);
-    g_eink.printf("%u B  %s", g_eink_len, g_eink_asc);
+    g_eink.printf("%s", g_eink_asc);
     g_eink.setTextColor(BLACK);
 
-    g_eink.setCursor(4, 90);
-    g_eink.print(g_eink_hex);
+    einkDrawRssiGraph();
   } else {
     g_eink.setCursor(4, 48);
     g_eink.println(F("433.775 MHz  SF7"));
-    g_eink.setCursor(4, 76);
+    g_eink.setCursor(4, 72);
     g_eink.println(F("waiting for beacon..."));
   }
   g_eink.update();
@@ -96,8 +191,10 @@ static void einkBegin() {
   g_eink_have_rx = false;
   g_eink_invert_until_ms = 0;
   g_eink_was_invert = false;
+  g_rssi_hist_n = 0;
+  g_have_beacon_seq = false;
+  g_last_beacon_seq = 0;
 
-  // landscape() is rotation 1; 3 = same landscape orientation rotated 180°
   g_eink.setRotation(3);
   g_eink.setFont(&FreeSans9pt7b);
   g_eink_ready = true;
@@ -114,7 +211,6 @@ static void einkShowRx(const uint8_t* data, size_t len, float rssi, float snr) {
   g_eink_invert_until_ms = g_eink_last_rx_ms + kEinkInvertMs;
   g_eink_rssi = rssi;
   g_eink_snr = snr;
-  g_eink_len = (unsigned)len;
 
   size_t n = len < sizeof(g_eink_asc) - 1 ? len : sizeof(g_eink_asc) - 1;
   for (size_t i = 0; i < n; i++) {
@@ -123,22 +219,19 @@ static void einkShowRx(const uint8_t* data, size_t len, float rssi, float snr) {
   }
   g_eink_asc[n] = 0;
 
-  size_t h = 0;
-  const size_t hex_bytes = len < 12 ? len : 12;
-  for (size_t i = 0; i < hex_bytes && h + 3 < sizeof(g_eink_hex); i++) {
-    h += snprintf(g_eink_hex + h, sizeof(g_eink_hex) - h, "%02X%s", data[i],
-                  (i + 1 < hex_bytes) ? " " : "");
-  }
-  if (len > hex_bytes && h + 3 < sizeof(g_eink_hex)) {
-    snprintf(g_eink_hex + h, sizeof(g_eink_hex) - h, "..");
-  } else {
-    g_eink_hex[h] = 0;
+  uint32_t seq = 0;
+  if (einkParseBeaconSeq(g_eink_asc, &seq)) {
+    if (g_have_beacon_seq && seq > g_last_beacon_seq + 1) {
+      einkPushSkips(seq - g_last_beacon_seq - 1);
+    }
+    g_have_beacon_seq = true;
+    g_last_beacon_seq = seq;
   }
 
+  einkPushRssi(rssi);
   einkPaint();
 }
 
-// Call from loop(): refresh timers ~1 Hz; also clear invert as soon as it expires.
 static void einkTick() {
   if (!g_eink_ready) return;
   const uint32_t now = millis();
