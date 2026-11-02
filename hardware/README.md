@@ -1,6 +1,9 @@
 # esp32-e22-lora-board
 Carrier Board for Lora Tranceiver like E22-400M33S and ESP32 MCU
 
+Hardware files in this tree were copied from **DK9BT** on GitHub  
+([szf2020/esp32-e22-lora-board](https://github.com/szf2020/esp32-e22-lora-board)).
+
 ### Main Parts List:
 
 EBYTE E22-400M33S (2W/33dBm) https://www.amazon.de/dp/B0BMP99S3D
