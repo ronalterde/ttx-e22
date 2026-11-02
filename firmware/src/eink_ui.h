@@ -14,13 +14,8 @@ static uint32_t g_eink_start_ms = 0;
 static uint32_t g_eink_last_rx_ms = 0;
 static bool g_eink_have_rx = false;
 static uint32_t g_eink_last_paint_ms = 0;
-static uint32_t g_eink_invert_until_ms = 0;
-static bool g_eink_was_invert = false;
 
-static constexpr uint32_t kEinkInvertMs = 2500;
 static constexpr int16_t kPayloadBaseline = 56;
-static constexpr int16_t kPayloadBandY = 40;
-static constexpr int16_t kPayloadBandH = 22;
 
 // RSSI history: X = sample slot, Y = RSSI; skips = seq gaps (no line)
 static constexpr size_t kRssiHist = 56;
@@ -107,7 +102,10 @@ static void einkDrawRssiGraph() {
 
   if (g_rssi_hist_n < 1) return;
 
-  const int16_t plot_w = gw - 2;
+  // Horizontal padding so first/last points are clear of the frame
+  const int16_t pad_x = 14;
+  const int16_t x0 = gx + pad_x;
+  const int16_t plot_w = gw - 2 * pad_x;
   int16_t prev_x = -1;
   int16_t prev_y = -1;
   int16_t last_good_x = -1;
@@ -115,8 +113,7 @@ static void einkDrawRssiGraph() {
 
   for (size_t i = 0; i < g_rssi_hist_n; i++) {
     const int16_t x =
-        (int16_t)(gx + 1 +
-                  ((int32_t)i * (plot_w - 1)) / (int32_t)(kRssiHist - 1));
+        (int16_t)(x0 + ((int32_t)i * (plot_w - 1)) / (int32_t)(kRssiHist - 1));
     if (g_rssi_hist[i] == kRssiSkip) {
       // Vertical tick = skipped sample; break polyline
       g_eink.drawLine(x, gy + 3, x, gy + gh - 3, BLACK);
@@ -151,9 +148,6 @@ static void einkPaint() {
     snprintf(ago, sizeof(ago), "--:--");
   }
 
-  const bool invert_payload =
-      g_eink_have_rx && (int32_t)(g_eink_invert_until_ms - now) > 0;
-
   g_eink.clearMemory();
   g_eink.setTextColor(BLACK);
   g_eink.setFont(&FreeSans9pt7b);
@@ -164,15 +158,8 @@ static void einkPaint() {
     g_eink.setCursor(4, 34);
     g_eink.printf("#%lu %.0fdBm SNR%.1f", (unsigned long)g_rx_count,
                   g_eink_rssi, g_eink_snr);
-
-    if (invert_payload) {
-      g_eink.fillRect(0, kPayloadBandY, g_eink.width(), kPayloadBandH, BLACK);
-      g_eink.setTextColor(WHITE);
-    }
     g_eink.setCursor(4, kPayloadBaseline);
     g_eink.printf("%s", g_eink_asc);
-    g_eink.setTextColor(BLACK);
-
     einkDrawRssiGraph();
   } else {
     g_eink.setCursor(4, 48);
@@ -182,15 +169,12 @@ static void einkPaint() {
   }
   g_eink.update();
   g_eink_last_paint_ms = now;
-  g_eink_was_invert = invert_payload;
 }
 
 static void einkBegin() {
   g_eink_start_ms = millis();
   g_eink_last_rx_ms = g_eink_start_ms;
   g_eink_have_rx = false;
-  g_eink_invert_until_ms = 0;
-  g_eink_was_invert = false;
   g_rssi_hist_n = 0;
   g_have_beacon_seq = false;
   g_last_beacon_seq = 0;
@@ -208,7 +192,6 @@ static void einkShowRx(const uint8_t* data, size_t len, float rssi, float snr) {
   g_rx_count++;
   g_eink_have_rx = true;
   g_eink_last_rx_ms = millis();
-  g_eink_invert_until_ms = g_eink_last_rx_ms + kEinkInvertMs;
   g_eink_rssi = rssi;
   g_eink_snr = snr;
 
@@ -234,11 +217,7 @@ static void einkShowRx(const uint8_t* data, size_t len, float rssi, float snr) {
 
 static void einkTick() {
   if (!g_eink_ready) return;
-  const uint32_t now = millis();
-  const bool invert_now =
-      g_eink_have_rx && (int32_t)(g_eink_invert_until_ms - now) > 0;
-  const bool invert_ended = g_eink_was_invert && !invert_now;
-  if (!invert_ended && (now - g_eink_last_paint_ms) < 1000UL) return;
+  if ((millis() - g_eink_last_paint_ms) < 1000UL) return;
   einkPaint();
 }
 
